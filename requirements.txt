@@ -1,5 +1,7 @@
 pytelegrambotapi
 requests
 pillow
+opencv-python-headless
 pyzbar
 beautifulsoup4
+numpy
