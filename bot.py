@@ -1,7 +1,7 @@
 import telebot
 import requests
-from PIL import Image
-from pyzbar.pyzbar import decode
+import cv2
+import numpy as np
 import io
 import os
 import logging
@@ -17,7 +17,7 @@ log = logging.getLogger(__name__)
 # ── Config ──────────────────────────────
 BOT_TOKEN      = "8933611445:AAHPmOqrC2Hg8FymDSgidP-KON90Kho8JqQ"
 KBZPAY_NUMBER  = "09894396106"
-ADMIN_ID       = 8060259093  # မင်းရဲ့ Telegram User ID ထည့်
+ADMIN_ID       = 8060259093
 
 PLANS = {
     1: {
@@ -63,16 +63,27 @@ def save_bill(bill_no: str, user_id: int, amount: int):
 
 def scan_qr(image_bytes: bytes) -> str | None:
     try:
-        img = Image.open(io.BytesIO(image_bytes))
-        # ကြည်လင်အောင် grayscale ပြောင်း
-        img = img.convert("L")
-        decoded = decode(img)
-        for obj in decoded:
-            url = obj.data.decode("utf-8")
-            if "kbzpay.com" in url:
-                log.info(f"QR URL တွေ့တယ်: {url}")
-                return url
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        img   = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+        # Method 1 — OpenCV QR Detector
+        detector  = cv2.QRCodeDetector()
+        data, _, _ = detector.detectAndDecode(img)
+        if data and "kbzpay.com" in data:
+            log.info(f"QR တွေ့တယ်: {data}")
+            return data
+
+        # Method 2 — ကြည်လင်အောင် ပြင်ပြီး ထပ်ကြိုး
+        gray      = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        _, thresh = cv2.threshold(gray, 0, 255,
+                                  cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        data2, _, _ = detector.detectAndDecode(thresh)
+        if data2 and "kbzpay.com" in data2:
+            log.info(f"QR တွေ့တယ် (enhanced): {data2}")
+            return data2
+
         return None
+
     except Exception as e:
         log.error(f"QR Scan Error: {e}")
         return None
@@ -138,7 +149,7 @@ def notify_admin(bot: telebot.TeleBot, msg: str):
         log.error(f"Admin notify Error: {e}")
 
 
-# ── Bot Handlers ────────────────────────
+# ── Bot ─────────────────────────────────
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 
@@ -207,7 +218,7 @@ def handle_slip(msg):
         "⏳ Slip စစ်ဆေးနေတယ်...\nခဏစောင့်ပါ။"
     )
 
-    # ── Step 1: Image Download ───────────
+    # Step 1: Image Download
     try:
         file_info   = bot.get_file(msg.photo[-1].file_id)
         image_bytes = bot.download_file(file_info.file_path)
@@ -219,18 +230,18 @@ def handle_slip(msg):
         )
         return
 
-    # ── Step 2: QR Scan ──────────────────
+    # Step 2: QR Scan
     url = scan_qr(image_bytes)
     if not url:
         bot.edit_message_text(
             "❌ QR Code မတွေ့ဘူး။\n\n"
             "📌 သေချာတဲ့ Slip Screenshot တင်ပါ။\n"
-            "💡 Screenshot မှာ QR Code ပါဖို့ လိုတယ်။",
+            "💡 QR Code ပါတဲ့ Slip ဖြစ်ဖို့ လိုတယ်။",
             msg.chat.id, processing.message_id
         )
         return
 
-    # ── Step 3: KBZPay Verify ────────────
+    # Step 3: KBZPay Verify
     data = verify_kbzpay(url)
     if not data:
         bot.edit_message_text(
@@ -240,7 +251,7 @@ def handle_slip(msg):
         )
         return
 
-    # ── Step 4: Status Check ─────────────
+    # Step 4: Status Check
     if data["status"] != "Success":
         bot.edit_message_text(
             "❌ Payment မအောင်မြင်ဘူး။\n"
@@ -249,7 +260,7 @@ def handle_slip(msg):
         )
         return
 
-    # ── Step 5: Bill Reuse Check ─────────
+    # Step 5: Bill Reuse Check
     bill_no = data.get("bill_no")
     if bill_no and is_bill_used(bill_no):
         bot.edit_message_text(
@@ -265,20 +276,19 @@ def handle_slip(msg):
         )
         return
 
-    # ── Step 6: Amount Check ─────────────
+    # Step 6: Amount Check
     amount = data.get("amount", 0)
     if amount not in PLANS:
         bot.edit_message_text(
             f"❌ Amount မမှန်ဘူး။\n\n"
             f"📤 ပို့ထားတဲ့ Amount: <b>{amount} ကျပ်</b>\n"
-            f"✅ မှန်ကန်တဲ့ Amount: "
-            f"<b>1, 2, သို့မဟုတ် 3 ကျပ်</b>\n\n"
+            f"✅ မှန်ကန်တဲ့ Amount: <b>1, 2, သို့မဟုတ် 3 ကျပ်</b>\n\n"
             f"Plan တွေကြည့်ဖို့ /plans နှိပ်ပါ။",
             msg.chat.id, processing.message_id
         )
         return
 
-    # ── Step 7: Save & Send Link ─────────
+    # Step 7: Save & Send Link
     if bill_no:
         save_bill(bill_no, user_id, amount)
 
@@ -301,11 +311,6 @@ def handle_slip(msg):
         f"💵 Amount: {amount} ကျပ်\n"
         f"📦 Plan: {plan['name']}\n"
         f"🕐 Time: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-    )
-
-    log.info(
-        f"Payment OK — User:{user_id} "
-        f"Amount:{amount} Bill:{bill_no}"
     )
 
 
