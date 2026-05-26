@@ -15,7 +15,7 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 # ── Config ──────────────────────────────
-BOT_TOKEN      = "8933611445:AAHPmOqrC2Hg8FymDSgidP-KON90Kho8JqQ"
+BOT_TOKEN      = "8933611445:AAGGiW71EXXlL7DSDzl2M4Ac-vzek0bXOaY"
 KBZPAY_NUMBER  = "09894396106"
 ADMIN_ID       = 8060259093
 
