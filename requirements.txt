@@ -1,0 +1,5 @@
+pytelegrambotapi
+requests
+pillow
+pyzbar
+beautifulsoup4
